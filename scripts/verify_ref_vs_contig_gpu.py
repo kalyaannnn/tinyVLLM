@@ -1,0 +1,72 @@
+import torch
+
+from vllm_scratch.attention.reference import paged_attention_decode_ref
+from vllm_scratch.kv_cache.allocator import BlockAllocator
+from vllm_scratch.kv_cache.block_table import BlockTable
+
+
+@torch.no_grad()
+def main() -> None:
+    assert torch.cuda.is_available()
+    device = torch.device("cuda")
+    torch.manual_seed(0)
+
+    B, H, D = 4, 8, 64
+    block_tokens = 16
+    seqlens = torch.tensor([33, 64, 17, 49], device=device, dtype=torch.int64)
+
+    # build block tables
+    alloc = BlockAllocator(num_blocks=512)
+    max_blocks = int(((int(seqlens.max().item()) + block_tokens - 1) // block_tokens))
+    block_tables = torch.full((B, max_blocks), -1, device=device, dtype=torch.int64)
+
+    bts = []
+    for b in range(B):
+        bt = BlockTable(block_tokens=block_tokens)
+        bt.ensure_capacity(int(seqlens[b].item()), alloc)
+        bts.append(bt)
+        for i, phys in enumerate(bt.blocks):
+            block_tables[b, i] = phys
+
+    NB = alloc.num_blocks
+    k_cache = torch.zeros((NB, block_tokens, H, D), device=device, dtype=torch.float16)
+    v_cache = torch.zeros_like(k_cache)
+
+    # make contiguous KV and pack into pages
+    k_contig, v_contig = [], []
+    for b in range(B):
+        T = int(seqlens[b].item())
+        k = torch.randn((T, H, D), device=device, dtype=torch.float16)
+        v = torch.randn((T, H, D), device=device, dtype=torch.float16)
+        k_contig.append(k)
+        v_contig.append(v)
+        for t in range(T):
+            phys, off = bts[b].token_slot(t)
+            k_cache[phys, off] = k[t]
+            v_cache[phys, off] = v[t]
+
+    q = torch.randn((B, H, D), device=device, dtype=torch.float16)
+
+    out_paged = paged_attention_decode_ref(
+        q=q,
+        k_cache=k_cache,
+        v_cache=v_cache,
+        block_tables=block_tables,
+        seqlens=seqlens,
+        block_tokens=block_tokens,
+    )
+
+    # baseline
+    out_base = torch.empty_like(out_paged)
+    scale = D ** -0.5
+    for b in range(B):
+        scores = torch.einsum("hd,thd->ht", q[b], k_contig[b]) * scale
+        probs = torch.softmax(scores, dim=-1)
+        out_base[b] = torch.einsum("ht,thd->hd", probs, v_contig[b])
+
+    torch.testing.assert_close(out_paged, out_base, rtol=2e-2, atol=2e-2)
+    print("OK: paged ref matches contiguous baseline on GPU.")
+
+
+if __name__ == "__main__":
+    main()
