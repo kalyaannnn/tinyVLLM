@@ -31,6 +31,7 @@ class ToyEngine:
         device: torch.device,
         dtype: torch.dtype,
     ) -> None:
+        self.layer = 0
         self.alloc = BlockAllocator(num_blocks=num_blocks)
         self.block_tokens = block_tokens
         self.H = H
@@ -38,6 +39,7 @@ class ToyEngine:
         self.device = device
         self.dtype = dtype
         self.kv = PagedKVCache(
+            num_layers=1,
             num_blocks=num_blocks,
             block_tokens=block_tokens,
             num_heads=H,
@@ -79,7 +81,7 @@ class ToyEngine:
             s.bt.ensure_capacity(L, self.alloc)
             k = torch.randn((L, self.H, self.D), device=self.device, dtype=self.dtype)
             v = torch.randn((L, self.H, self.D), device=self.device, dtype=self.dtype)
-            self.kv.write_range(s.bt, 0, k, v)
+            self.kv.write_range(self.layer, s.bt, 0, k, v)
             s.seqlen = L
 
         # Build Q padded
@@ -89,10 +91,12 @@ class ToyEngine:
             q[b, :L] = torch.randn((L, self.H, self.D), device=self.device, dtype=self.dtype)
 
         block_tables = self._batch_block_tables(seqs)
+        k_cache = self.kv.k(self.layer)
+        v_cache = self.kv.v(self.layer)
 
         if use_triton_v0:
-            return paged_attention_prefill_triton_v0(q, self.kv.k, self.kv.v, block_tables, seqlens, self.block_tokens)
-        return paged_attention_prefill_ref(q, self.kv.k, self.kv.v, block_tables, seqlens, self.block_tokens)
+            return paged_attention_prefill_triton_v0(q, k_cache, v_cache, block_tables, seqlens, self.block_tokens)
+        return paged_attention_prefill_ref(q, k_cache, v_cache, block_tables, seqlens, self.block_tokens)
 
     @torch.no_grad()
     def decode_step(self, seqs: List[SequenceState]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -104,18 +108,22 @@ class ToyEngine:
             s.bt.ensure_capacity(s.seqlen + 1, self.alloc)
             k_t = torch.randn((self.H, self.D), device=self.device, dtype=self.dtype)
             v_t = torch.randn((self.H, self.D), device=self.device, dtype=self.dtype)
-            self.kv.write_token(s.bt, s.seqlen, k_t, v_t)
+            self.kv.write_token(self.layer, s.bt, s.seqlen, k_t, v_t)
             s.seqlen += 1
 
         q_next = torch.randn((len(seqs), self.H, self.D), device=self.device, dtype=self.dtype)
         block_tables = self._batch_block_tables(seqs)
         seqlens = self._batch_seqlens(seqs)
+        k_cache = self.kv.k(self.layer)
+        v_cache = self.kv.v(self.layer)
 
-        out = paged_attention_decode_triton(q_next, self.kv.k, self.kv.v, block_tables, seqlens, self.block_tokens)
+        out = paged_attention_decode_triton(q_next, k_cache, v_cache, block_tables, seqlens, self.block_tokens)
         return q_next, out
 
     @torch.no_grad()
     def decode_step_ref(self, q_next: torch.Tensor, seqs: List[SequenceState]) -> torch.Tensor:
         block_tables = self._batch_block_tables(seqs)
         seqlens = self._batch_seqlens(seqs)
-        return paged_attention_decode_ref(q_next, self.kv.k, self.kv.v, block_tables, seqlens, self.block_tokens)
+        k_cache = self.kv.k(self.layer)
+        v_cache = self.kv.v(self.layer)
+        return paged_attention_decode_ref(q_next, k_cache, v_cache, block_tables, seqlens, self.block_tokens)
