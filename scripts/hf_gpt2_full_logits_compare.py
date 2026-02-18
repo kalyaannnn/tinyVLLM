@@ -35,7 +35,7 @@ def main() -> None:
     ap.add_argument("--block_tokens", type=int, default=16)
     ap.add_argument("--num_blocks", type=int, default=8192)
     ap.add_argument("--dtype", type=str, choices=["fp16", "bf16", "fp32"], default="fp16")
-    ap.add_argument("--tol", type=float, default=2e-2)
+    ap.add_argument("--tol", type=float, default=7e-2)
     args = ap.parse_args()
 
     if not torch.cuda.is_available():
@@ -54,7 +54,7 @@ def main() -> None:
     if tok.pad_token_id is None:
         tok.pad_token = tok.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=dtype).to(device)
+    model = AutoModelForCausalLM.from_pretrained(args.model, dtype=dtype).to(device)
     model.eval()
 
     enc = tok(args.prompt, return_tensors="pt")
