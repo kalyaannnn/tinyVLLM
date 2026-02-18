@@ -21,6 +21,10 @@ class BlockAllocator:
     def free_count(self) -> int:
         return len(self._free)
 
+    @property
+    def used_count(self) -> int:
+        return self.num_blocks - len(self._free)
+
     def alloc(self, n: int = 1) -> List[int]:
         if n <= 0:
             raise ValueError("n must be > 0")

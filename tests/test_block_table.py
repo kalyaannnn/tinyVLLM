@@ -15,3 +15,16 @@ def test_block_table_mapping() -> None:
     b4, o4 = bt.token_slot(4)
     assert o4 == 0
     assert b4 != b0
+
+
+def test_block_table_release_returns_capacity() -> None:
+    alloc = BlockAllocator(num_blocks=6)
+    bt = BlockTable(block_tokens=4)
+
+    bt.ensure_capacity(13, alloc)  # 4 blocks
+    assert len(bt.blocks) == 4
+    assert alloc.free_count == 2
+
+    bt.release(alloc)
+    assert bt.blocks == []
+    assert alloc.free_count == 6

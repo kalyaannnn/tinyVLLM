@@ -7,8 +7,8 @@ from typing import Optional, Tuple
 import torch
 from transformers import AutoModelForCausalLM
 
-from vllm_scratch.attention.reference import paged_attention_prefill_ref
 from vllm_scratch.attention.triton_decode import paged_attention_decode_triton
+from vllm_scratch.attention.triton_prefill_v0 import paged_attention_prefill_triton
 from vllm_scratch.kv_cache.block_table import BlockTable
 from vllm_scratch.kv_cache.paged_kv import PagedKVCache
 
@@ -98,7 +98,7 @@ class GPT2PagedRunner:
                 Tb = int(seqlens[b].item())
                 self.kv.write_range(layer=l, bt=bts[b], start_t=0, k=k[b, :Tb].contiguous(), v=v[b, :Tb].contiguous())
 
-            attn_out = paged_attention_prefill_ref(
+            attn_out = paged_attention_prefill_triton(
                 q=q,
                 k_cache=self.kv.k(l),
                 v_cache=self.kv.v(l),

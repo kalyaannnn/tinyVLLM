@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from ssl import _DEFAULT_CIPHERS
 from typing import List, Tuple
 
 from .allocator import BlockAllocator
@@ -35,4 +34,9 @@ class BlockTable:
         if logical_block >= len(self.blocks):
             raise IndexError("BlockTable capacity insufficient for token index")
         return self.blocks[logical_block], offset
+
+    def release(self, alloc: BlockAllocator) -> None:
+        if self.blocks:
+            alloc.free(self.blocks)
+            self.blocks.clear()
         
